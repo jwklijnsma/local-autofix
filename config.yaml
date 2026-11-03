@@ -1,0 +1,85 @@
+# config.yaml -- code review pipeline
+
+ollama:
+  # Which server API to speak to. "ollama" (default) uses Ollama's native
+  # /api/chat. "vllm" and "llamacpp" both use the OpenAI-compatible
+  # /v1/chat/completions endpoint instead (vLLM's server and llama.cpp's
+  # llama-server both speak this same protocol) -- same pipeline, same
+  # everything else, just talks to a different server. All endpoints below
+  # must be running the same backend type (don't mix backends in one list).
+  backend: "ollama"   # "ollama" | "vllm" | "llamacpp"
+
+  endpoints:
+    - host: "http://127.0.0.1:11434"
+      name: "gpu01"
+    - host: "http://127.0.0.1:11435"
+      name: "gpu23"
+    # For vLLM: point these at your vLLM OpenAI-compatible server(s),
+    # typically port 8000 by default, e.g.:
+    #   - host: "http://127.0.0.1:8000"
+    #     name: "vllm0"
+    # For llama.cpp (llama-server): typically port 8080 by default, e.g.:
+    #   - host: "http://127.0.0.1:8080"
+    #     name: "llamacpp0"
+    # Add/remove entries to match how many instances you're running.
+    # Listing multiple endpoints here is not enough on its own to get
+    # parallel throughput -- also pass `--workers N` to orchestrator.py
+    # (N roughly equal to the number of endpoints) so files are actually
+    # reviewed concurrently instead of one at a time. Endpoints round-robin
+    # across whichever worker threads are active.
+  model: "qwen2.5-coder:32b"   # a coder-tuned model is a better fit here than a general one
+  model_max_context: 32768
+  response_reserve_tokens: 2048
+
+  # How long to wait for a single response before giving up and retrying.
+  # Default is 600s (10 min). If your hardware is slow (e.g. older GPUs, or
+  # a large model under contention from multiple concurrent workers), raise
+  # this -- a request that would've succeeded at 12 minutes just gets
+  # needlessly killed and retried at 600s, wasting more time than waiting
+  # would have.
+  request_timeout: 600
+
+  # How many attempts before giving up on a single call entirely (that
+  # file then falls back to static-findings-only review, or gets skipped
+  # for fixing -- see orchestrator.py, this never crashes the whole run).
+  # Each failed attempt costs a full request_timeout, so 4 retries at 600s
+  # = up to 40 minutes wasted on ONE stuck call. If your server is
+  # consistently slow rather than occasionally flaky, fewer retries with a
+  # longer timeout is usually better than many retries with a short one.
+  max_retries: 4
+
+  # Exponential backoff base between retries (wait = base ** attempt
+  # seconds). Largely irrelevant next to a 600s timeout -- only matters
+  # much if you lower request_timeout.
+  backoff_base_seconds: 2.0
+
+  # Log a "still waiting on <endpoint>... Xs elapsed" line this often
+  # (seconds) while a request is in flight, so slow requests are visible
+  # in real time instead of going silent until they finish or time out.
+  # Set to 0 to disable.
+  heartbeat_interval_seconds: 30
+
+  # Circuit breaker: if one endpoint keeps timing out/erroring while
+  # others work fine (e.g. one server is broken but the rest aren't), stop
+  # sending it new requests for a while instead of paying a full
+  # request_timeout on it over and over. It's automatically retried after
+  # the cooldown in case it recovers.
+  circuit_breaker_failure_threshold: 2    # mark unhealthy after this many failures in a row
+  circuit_breaker_cooldown_seconds: 120    # how long to avoid it before retrying
+
+  # Explicit CPU/RAM vs GPU/VRAM control. Ollama already auto-offloads
+  # layers to CPU+RAM when a model doesn't fully fit in VRAM, but you can
+  # override that guess here:
+  #   num_gpu: how many model layers go on GPU. Omit/leave unset to let
+  #     Ollama decide automatically (usually the right call). Set to 0 to
+  #     force pure CPU+RAM inference with no GPU use at all -- much slower,
+  #     but works regardless of VRAM, and won't OOM.
+  #   num_thread: CPU threads for whatever runs on CPU. Omit to use
+  #     Ollama's default (usually all physical cores).
+  # Both are commented out by default -- uncomment and set values to use:
+  # num_gpu: 0
+  # num_thread: 8
+  # (num_gpu/num_thread only apply with backend: "ollama" -- vLLM controls
+  # GPU placement via its own server startup flags like
+  # --tensor-parallel-size, not per-request, so these are ignored and
+  # logged as a warning if set with backend: "vllm".)

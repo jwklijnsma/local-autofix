@@ -1,0 +1,11 @@
+requests>=2.31
+PyYAML>=6.0
+Jinja2>=3.1   # used to correctly syntax-check Ansible Jinja2 templates (files with {{ }} / {% %})
+
+# Linters used for grounded static analysis (all optional -- the pipeline
+# skips whichever ones aren't installed, with a warning, rather than
+# crashing). Install what applies to your repo:
+ruff>=0.6           # Python
+bandit>=1.7          # Python security
+yamllint>=1.35       # YAML
+ansible-lint>=24.0   # Ansible (pulls in ansible-core)
