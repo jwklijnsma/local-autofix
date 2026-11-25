@@ -1,0 +1,25 @@
+name: tests
+
+# Offline: the LLM HTTP layer is faked; ruff, bandit and yamllint run for real.
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install requests PyYAML Jinja2 ruff bandit yamllint pytest pytest-cov
+      - run: >-
+          python -m pytest -q
+          --cov=ollama_client --cov=orchestrator --cov=pipeline --cov-report=term-missing
