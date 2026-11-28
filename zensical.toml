@@ -1,0 +1,88 @@
+# local-autofix documentation - built with Zensical (https://zensical.org), same design as shift-mox
+#   pip install -r requirements-docs.txt
+#   zensical serve            # preview on http://localhost:8000
+#   zensical build --strict   # what CI runs
+
+[project]
+site_name = "local-autofix"
+site_description = "Code review and auto-fix pipeline for Python and Ansible with real linters plus a local LLM - every fix verified before it is written"
+site_url = "https://jwklijnsma.github.io/local-autofix/"
+repo_url = "https://github.com/jwklijnsma/local-autofix"
+repo_name = "jwklijnsma/local-autofix"
+edit_uri = "edit/main/docs/"
+copyright = "local-autofix - no code leaves your machine"
+nav = [
+  { "Home" = "index.md" },
+  { "Getting started" = [
+    { "Setup and quick start" = "quickstart.md" },
+    { "How it works" = "how-it-works.md" },
+  ] },
+  { "Configuration" = [
+    { "CLI reference" = "cli.md" },
+    { "config.yaml" = "configuration.md" },
+    { "vLLM and llama.cpp" = "backends.md" },
+    { "CPU vs GPU" = "cpu-gpu.md" },
+  ] },
+  { "Usage" = [
+    { "Output" = "output.md" },
+    { "Auto-fixable or not" = "auto-fixable.md" },
+    { "Several Ollama servers" = "multi-server.md" },
+    { "Ansible Jinja2 templates" = "jinja.md" },
+  ] },
+  { "Troubleshooting" = "troubleshooting.md" },
+  { "Reference" = [
+    { "Files" = "files.md" },
+    { "Testing" = "testing.md" },
+  ] },
+]
+
+[project.theme]
+language = "en"
+features = [
+  "content.action.edit",
+  "content.code.annotate",
+  "content.code.copy",
+  "navigation.footer",
+  "navigation.sections",
+  "navigation.tabs",
+  "navigation.top",
+  "search.highlight",
+]
+
+[project.theme.icon]
+logo = "material/auto-fix"
+repo = "fontawesome/brands/github"
+
+[[project.theme.palette]]
+media = "(prefers-color-scheme: light)"
+scheme = "default"
+primary = "deep purple"
+accent = "deep orange"
+toggle.icon = "material/weather-night"
+toggle.name = "Dark mode"
+
+[[project.theme.palette]]
+media = "(prefers-color-scheme: dark)"
+scheme = "slate"
+primary = "deep purple"
+accent = "deep orange"
+toggle.icon = "material/weather-sunny"
+toggle.name = "Light mode"
+
+[project.markdown_extensions]
+admonition = {}
+attr_list = {}
+md_in_html = {}
+tables = {}
+toc.permalink = true
+pymdownx.details = {}
+pymdownx.emoji.emoji_index = "zensical.extensions.emoji.twemoji"
+pymdownx.emoji.emoji_generator = "zensical.extensions.emoji.to_svg"
+pymdownx.highlight.anchor_linenums = true
+pymdownx.inlinehilite = {}
+pymdownx.keys = {}
+pymdownx.snippets = {}
+pymdownx.tabbed.alternate_style = true
+pymdownx.superfences.custom_fences = [
+  { name = "mermaid", class = "mermaid", format = "pymdownx.superfences.fence_code_format" },
+]

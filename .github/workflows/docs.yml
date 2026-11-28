@@ -1,0 +1,66 @@
+name: Docs
+
+# Builds the Zensical site on every push / PR that touches the docs, and
+# publishes it to GitHub Pages from main.
+# One-time setup: repo > Settings > Pages > Source: "GitHub Actions".
+on:
+  push:
+    branches: [main]
+    paths: [docs/**, zensical.toml, requirements-docs.txt, .github/workflows/docs.yml]
+  pull_request:
+    paths: [docs/**, zensical.toml, requirements-docs.txt, .github/workflows/docs.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docs-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.15"
+          cache: pip
+          cache-dependency-path: requirements-docs.txt
+      - run: pip install -r requirements-docs.txt
+      # --strict: fail on warnings such as links to missing pages or anchors
+      - run: zensical build --clean --strict
+      - uses: actions/upload-pages-artifact@v5
+        if: github.event_name != 'pull_request'
+        with:
+          path: site
+
+  deploy:
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      # Pages has to be switched on once by hand (Settings > Pages > Source:
+      # GitHub Actions); the workflow token can't do it. Until then - and in
+      # forks - skip the deploy with a warning instead of failing.
+      - name: Is GitHub Pages enabled?
+        id: pages
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh api "repos/${GITHUB_REPOSITORY}/pages" >/dev/null 2>&1; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::warning title=GitHub Pages is off::Enable it under Settings > Pages > Source: GitHub Actions (https://github.com/${GITHUB_REPOSITORY}/settings/pages), then re-run this workflow. The site was built but not published."
+          fi
+      - id: deployment
+        if: steps.pages.outputs.enabled == 'true'
+        uses: actions/deploy-pages@v5

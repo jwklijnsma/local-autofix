@@ -1,0 +1,57 @@
+name: renovate
+
+# Runs Renovate in this repository's own Actions, so dependency update PRs come
+# without installing the Renovate app. What it updates is set in renovate.json.
+#
+# One-time setup: a fine-grained personal access token as the secret RENOVATE_TOKEN
+# (Settings > Secrets and variables > Actions), for this repository only, with
+#   Contents, Pull requests, Issues, Workflows: Read and write.
+# GITHUB_TOKEN can't be used: PRs it opens start no checks, so automerge.yml would
+# never see them pass, and it may not change files under .github/workflows/.
+
+on:
+  schedule:
+    - cron: "41 */4 * * *"   # every 4 hours
+  workflow_dispatch:
+    inputs:
+      log_level:
+        description: Renovate log level
+        type: choice
+        options: [info, debug]
+        default: info
+  push:
+    branches: [main]
+    paths: [renovate.json, .github/workflows/renovate.yml]
+
+concurrency:
+  group: renovate
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  renovate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check the token
+        env:
+          TOKEN: ${{ secrets.RENOVATE_TOKEN }}
+        run: |
+          if [ -z "$TOKEN" ]; then
+            echo "::error::Add the RENOVATE_TOKEN secret first (see the top of .github/workflows/renovate.yml)."
+            exit 1
+          fi
+
+      - uses: actions/checkout@v7
+
+      - uses: renovatebot/github-action@v48.0.0
+        with:
+          token: ${{ secrets.RENOVATE_TOKEN }}
+        env:
+          RENOVATE_REPOSITORIES: ${{ github.repository }}
+          RENOVATE_ONBOARDING: "false"          # renovate.json is already here
+          RENOVATE_REQUIRE_CONFIG: required
+          RENOVATE_PLATFORM_COMMIT: enabled     # commits show as verified
+          LOG_LEVEL: ${{ inputs.log_level || 'info' }}
