@@ -1,0 +1,20 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended", ":dependencyDashboard"],
+  "labels": ["dependencies"],
+  "prHourlyLimit": 4,
+  "prConcurrentLimit": 10,
+  "packageRules": [
+    {
+      "description": "The docs site (requirements-docs.txt)",
+      "matchFileNames": ["requirements-docs.txt"],
+      "commitMessageTopic": "docs dependency {{depName}}"
+    },
+    {
+      "description": "GitHub Actions: one PR for all minor and patch bumps",
+      "matchManagers": ["github-actions"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "groupName": "GitHub Actions"
+    }
+  ]
+}

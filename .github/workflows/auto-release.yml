@@ -1,0 +1,68 @@
+name: auto-release
+
+# Starts the release workflow on its own:
+#   - right after one of your PRs is merged into main (not bot PRs);
+#   - every Monday, for whatever was merged since the last release (bot updates).
+# It does nothing when main has no commits since the last tag.
+#
+# The bump comes from the labels on the PRs merged since the last release:
+#   release:major -> major, release:minor -> minor, otherwise patch.
+# Label a PR no-release to keep its merge from starting a release (it still goes
+# out with the next one). Minor/major by hand: Actions -> release -> Run workflow.
+
+on:
+  # pull_request_target, so PRs from forks also get a token that can start the
+  # release. Safe here: it checks out main, never the PR's code.
+  pull_request_target:
+    types: [closed]
+    branches: [main]
+  schedule:
+    - cron: "23 5 * * 1"   # Mondays 05:23 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    if: >-
+      github.event_name != 'pull_request_target'
+      || (github.event.pull_request.merged
+          && !endsWith(github.event.pull_request.user.login, '[bot]')
+          && !startsWith(github.event.pull_request.head.ref, 'renovate/')
+          && !contains(github.event.pull_request.labels.*.name, 'no-release'))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+      actions: write        # start release.yml
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Pick the bump and start the release
+        run: |
+          set -euo pipefail
+          last=$(git describe --tags --abbrev=0 --match 'v[0-9]*.[0-9]*.[0-9]*' 2>/dev/null || true)
+          new=$(git rev-list --count "${last:+$last..}HEAD")
+          echo "Last release: ${last:-none}; commits since: $new" | tee -a "$GITHUB_STEP_SUMMARY"
+          if [ "$new" -eq 0 ]; then
+            echo "Nothing to release." | tee -a "$GITHUB_STEP_SUMMARY"; exit 0
+          fi
+
+          # PRs merged into main since the last release, and their labels.
+          since=$( [ -n "$last" ] && git log -1 --format=%ct "$last" || echo 0 )
+          labels=$(gh api --paginate "repos/$REPO/pulls?state=closed&base=main&per_page=100" \
+                     --jq ".[] | select(.merged_at != null and (.merged_at | fromdateiso8601) > $since) | .labels[].name")
+          bump="patch"
+          grep -qx 'release:minor' <<< "$labels" && bump=minor
+          grep -qx 'release:major' <<< "$labels" && bump=major
+          echo "Bump: **$bump**" | tee -a "$GITHUB_STEP_SUMMARY"
+
+          gh workflow run release.yml --repo "$REPO" --ref main -f bump="$bump" -f only_if_changed=true
+          echo "Started the release workflow." | tee -a "$GITHUB_STEP_SUMMARY"

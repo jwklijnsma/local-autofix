@@ -1,0 +1,170 @@
+name: release
+
+# Tags a release of main and publishes a GitHub release with notes generated from
+# the merged PRs. The tag is only made on a commit whose other checks all passed.
+#
+# Started by auto-release.yml (after your merged PRs, and weekly), or by hand:
+# Actions -> release -> Run workflow.
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Version bump
+        type: choice
+        options: [patch, minor, major]
+        default: patch
+      version:
+        description: Or an exact version X.Y.Z (overrides the bump)
+        type: string
+        required: false
+      dry_run:
+        description: Dry run (work out the version and notes, tag nothing)
+        type: boolean
+        default: false
+      only_if_changed:
+        description: Skip when main has no commits since the last release (auto-release)
+        type: boolean
+        default: false
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      skip: ${{ steps.next.outputs.skip }}
+      sha: ${{ steps.next.outputs.sha }}
+      tag: ${{ steps.next.outputs.tag }}
+      previous: ${{ steps.next.outputs.previous }}
+    steps:
+      - name: Release only from main
+        if: github.ref != 'refs/heads/main' && !inputs.dry_run
+        run: |
+          echo "::error::Releases are cut from main; you started this on ${GITHUB_REF_NAME}. (Dry runs may use any branch.)"
+          exit 1
+
+      - uses: actions/checkout@v7
+        with:
+          # The branch tip when the job starts, not when the run was queued: runs can
+          # wait for each other (concurrency), and an earlier one may have released.
+          ref: ${{ !inputs.dry_run && github.ref_name || '' }}
+          fetch-depth: 0
+
+      - name: Work out the next version
+        id: next
+        env:
+          BUMP: ${{ inputs.bump }}
+          EXACT: ${{ inputs.version }}
+          ONLY_IF_CHANGED: ${{ inputs.only_if_changed }}
+        run: |
+          set -euo pipefail
+          last=$(git describe --tags --abbrev=0 --match 'v[0-9]*.[0-9]*.[0-9]*' 2>/dev/null || true)
+          new=$(git rev-list --count "${last:+$last..}HEAD")
+          echo "Last release: ${last:-none}; commits since: $new" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "previous=$last" >> "$GITHUB_OUTPUT"
+          if [ "$ONLY_IF_CHANGED" = true ] && [ "$new" -eq 0 ]; then
+            echo "Nothing to release." | tee -a "$GITHUB_STEP_SUMMARY"
+            echo "skip=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+
+          cur=${last#v}; cur=${cur:-0.0.0}
+          IFS=. read -r ma mi pa <<< "$cur"
+          exact=${EXACT#v}
+          if [ -n "$exact" ]; then
+            [[ $exact =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::version must look like 1.2.3, got '$exact'"; exit 1; }
+            next=$exact
+          elif [ -z "$last" ]; then
+            next=0.1.0                       # first release
+          else
+            case $BUMP in
+              major) next="$((ma + 1)).0.0" ;;
+              minor) next="$ma.$((mi + 1)).0" ;;
+              *)     next="$ma.$mi.$((pa + 1))" ;;
+            esac
+          fi
+          if [ "$(printf '%s\n%s\n' "$cur" "$next" | sort -V | tail -1)" != "$next" ] || [ "$cur" = "$next" ]; then
+            echo "::error::$next is not higher than the current $cur"; exit 1
+          fi
+          if git rev-parse -q --verify "refs/tags/v$next" >/dev/null; then
+            echo "::error::tag v$next already exists"; exit 1
+          fi
+          echo "${last:-none} -> v$next" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "tag=v$next" >> "$GITHUB_OUTPUT"
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+
+  checks:
+    needs: plan
+    if: needs.plan.outputs.skip != 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      checks: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SHA: ${{ needs.plan.outputs.sha }}
+    steps:
+      - name: Wait for the commit's checks
+        run: |
+          # every check on the commit, except this release run itself, must pass
+          for _ in $(seq 1 80); do
+            runs=$(gh api "repos/$GITHUB_REPOSITORY/commits/$SHA/check-runs?per_page=100" \
+                     --jq "[.check_runs[] | select(.name | IN(\"plan\",\"checks\",\"github\") | not)]")
+            pending=$(jq '[.[] | select(.status != "completed")] | length' <<< "$runs")
+            failed=$(jq -r '[.[] | select(.status == "completed" and (.conclusion | IN("success","skipped","neutral") | not)) | .name] | join(", ")' <<< "$runs")
+            if [ -n "$failed" ]; then echo "::error::checks failed on ${SHA:0:7}: $failed"; exit 1; fi
+            if [ "$pending" -eq 0 ]; then echo "All $(jq length <<< "$runs") checks passed."; exit 0; fi
+            echo "waiting: $pending check(s) still running"; sleep 30
+          done
+          echo "::error::checks did not finish in time"; exit 1
+
+  github:
+    needs: [plan, checks]
+    if: needs.plan.outputs.skip != 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SHA: ${{ needs.plan.outputs.sha }}
+      TAG: ${{ needs.plan.outputs.tag }}
+      PREV: ${{ needs.plan.outputs.previous }}
+      DRY_RUN: ${{ inputs.dry_run && 'true' || 'false' }}
+    steps:
+      - name: Release notes
+        run: |
+          set -euo pipefail
+          args=(-f tag_name="$TAG" -f target_commitish="$SHA")
+          [ -n "$PREV" ] && args+=(-f previous_tag_name="$PREV")
+          gh api "repos/$GITHUB_REPOSITORY/releases/generate-notes" "${args[@]}" --jq .body > generated.md
+          {
+            echo "## Get it"
+            echo
+            echo '```bash'
+            echo "git clone --branch $TAG https://github.com/$GITHUB_REPOSITORY.git"
+            echo "# or, in an existing clone:"
+            echo "git fetch --tags && git checkout $TAG"
+            echo '```'
+            echo
+            echo "Docs: https://${GITHUB_REPOSITORY_OWNER,,}.github.io/${GITHUB_REPOSITORY#*/}/"
+            echo
+            cat generated.md
+          } > notes.md
+          cat notes.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Tag and create the GitHub release
+        if: env.DRY_RUN != 'true'
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/tags/$TAG" -f sha="$SHA" >/dev/null
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --title "${GITHUB_REPOSITORY#*/} ${TAG#v}" --notes-file notes.md
+          echo "### Released $TAG" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Dry run
+        if: env.DRY_RUN == 'true'
+        run: |
+          echo "### Dry run: would release $TAG at ${SHA:0:7} (nothing tagged)" >> "$GITHUB_STEP_SUMMARY"
